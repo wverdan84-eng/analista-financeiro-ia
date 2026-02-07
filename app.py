@@ -1,145 +1,116 @@
 import streamlit as st
-from PIL import Image, ImageEnhance, ImageOps
 import requests
 import io
+from PIL import Image, ImageEnhance, ImageOps
 import re
 
-# ===============================
-# CONFIG STREAMLIT
-# ===============================
-st.set_page_config(
-    page_title="Analista Financeiro IA",
-    page_icon="📊",
-    layout="centered"
-)
+st.set_page_config(page_title="Analista Financeiro IA", layout="centered")
 
 st.title("📊 Analista Financeiro IA")
-st.write("Envie um print da sua carteira e receba uma análise automática.")
+st.write("Envie o print da sua carteira ou cole os ativos manualmente.")
 
-# ===============================
-# FUNÇÃO OCR (API OCR.SPACE)
-# ===============================
-def ocr_ia(imagem: Image.Image) -> str:
-    # Pré-processamento
-    imagem = imagem.convert("L")  # cinza
-    imagem = ImageOps.invert(imagem)
-    imagem = ImageEnhance.Contrast(imagem).enhance(2.5)
-    imagem = ImageEnhance.Sharpness(imagem).enhance(2)
-
-    buffer = io.BytesIO()
-    imagem.save(buffer, format="PNG")
-    img_bytes = buffer.getvalue()
-
+# ---------- OCR ----------
+def ocr_ia(imagem):
     try:
+        imagem = imagem.convert("L")
+        imagem = ImageOps.invert(imagem)
+        imagem = ImageEnhance.Contrast(imagem).enhance(2.5)
+        imagem = ImageEnhance.Sharpness(imagem).enhance(2)
+
+        buffer = io.BytesIO()
+        imagem.save(buffer, format="PNG")
+
         response = requests.post(
             "https://api.ocr.space/parse/image",
-            files={"file": img_bytes},
+            files={"file": buffer.getvalue()},
             data={
-                "apikey": "helloworld",  # API gratuita
+                "apikey": "helloworld",
                 "language": "eng",
                 "OCREngine": 2,
             },
-            timeout=30
+            timeout=20,
         )
-        result = response.json()
-    except Exception:
-        return ""
 
-    if (
-        isinstance(result, dict)
-        and "ParsedResults" in result
-        and result["ParsedResults"]
-    ):
-        return result["ParsedResults"][0].get("ParsedText", "")
+        data = response.json()
+        if isinstance(data, dict) and data.get("ParsedResults"):
+            return data["ParsedResults"][0].get("ParsedText", "")
+    except Exception:
+        pass
 
     return ""
 
-# ===============================
-# FUNÇÃO DE ANÁLISE DA CARTEIRA
-# ===============================
-def analisar_carteira(texto: str):
-    linhas = [l.strip() for l in texto.splitlines() if l.strip()]
-
+# ---------- PARSER ----------
+def organizar_ativos(texto):
+    linhas = texto.splitlines()
     ativos = []
+
     for linha in linhas:
-        if re.fullmatch(r"[A-Z]{2,6}", linha):
-            ativos.append(linha)
+        ticker = re.findall(r"\b[A-Z]{2,5}\b", linha)
+        if ticker:
+            ativos.append(ticker[0])
 
-    ativos = list(set(ativos))  # remove duplicados
+    return list(set(ativos))
 
-    renda_variavel = []
-    cripto = []
-    renda_fixa = []
+# ---------- APP ----------
+imagem = st.file_uploader("📷 Envie o print da carteira", type=["png", "jpg", "jpeg"])
 
-    for ativo in ativos:
-        if ativo in ["BTC", "ETH", "BTCO"]:
-            cripto.append(ativo)
-        elif ativo in ["CDB", "LCI", "LCA", "TESOURO"]:
-            renda_fixa.append(ativo)
-        else:
-            renda_variavel.append(ativo)
+texto_extraido = ""
 
-    return ativos, renda_variavel, cripto, renda_fixa
+if imagem:
+    img = Image.open(imagem)
+    texto_extraido = ocr_ia(img)
 
-# ===============================
-# UPLOAD DA IMAGEM
-# ===============================
-imagem_upload = st.file_uploader(
-    "📤 Envie o print da carteira",
-    type=["png", "jpg", "jpeg"]
+    if texto_extraido.strip():
+        st.success("📄 Texto detectado automaticamente")
+        st.text_area("Texto detectado", texto_extraido, height=150)
+    else:
+        st.warning("❌ OCR não conseguiu ler o print")
+
+texto_manual = st.text_area(
+    "✍️ Cole ou digite seus ativos (ex: VT, VNQ, GLD, BTCO)",
+    height=120,
 )
 
-if imagem_upload:
-    imagem = Image.open(imagem_upload)
+texto_final = texto_extraido if texto_extraido.strip() else texto_manual
 
-    st.image(imagem, caption="Imagem enviada", use_column_width=True)
-
-    with st.spinner("🔍 Extraindo texto do print..."):
-        texto = ocr_ia(imagem)
-
-    if not texto.strip():
-        st.error("❌ Não foi possível extrair texto do print.")
-        st.markdown("""
-👉 **Dicas para melhorar o resultado:**
-- Use **modo claro** no app da corretora  
-- Aumente o **zoom (125% ou 150%)**  
-- Evite imagens borradas  
-- Print apenas da **lista de ativos**
-""")
+if st.button("🔍 Analisar carteira"):
+    if not texto_final.strip():
+        st.error("Informe ao menos um ativo.")
     else:
-        st.subheader("📄 Texto detectado")
-        st.text(texto)
+        ativos = organizar_ativos(texto_final)
 
-        ativos, renda_variavel, cripto, renda_fixa = analisar_carteira(texto)
+        renda_variavel = []
+        cripto = []
+        renda_fixa = []
 
-        if ativos:
-            st.subheader("📊 Carteira organizada")
+        for a in ativos:
+            if a in ["BTC", "ETH", "BTCO"]:
+                cripto.append(a)
+            elif a in ["CDB", "TESOURO", "LCI", "LCA"]:
+                renda_fixa.append(a)
+            else:
+                renda_variavel.append(a)
 
-            st.write("**Ativos identificados:**")
-            st.write(", ".join(ativos))
+        st.markdown("## 🧠 Análise do Analista Financeiro IA")
 
-            st.markdown(f"""
-### 🧠 Análise do Analista Financeiro IA
+        st.markdown(f"""
+**Resumo da carteira**
 
-**Resumo geral da carteira:**
-- Total de ativos identificados: **{len(ativos)}**
-- Renda variável (ETFs/Ações): **{len(renda_variavel)}**
+- Total de ativos: **{len(ativos)}**
+- Renda variável: **{len(renda_variavel)}**
 - Criptomoedas: **{len(cripto)}**
 - Renda fixa: **{len(renda_fixa)}**
+        """)
 
-**Análise profissional:**
-Sua carteira apresenta exposição internacional e ativos de proteção.
+        st.markdown("""
+### 📈 Diagnóstico profissional
 
-**Pontos positivos:**  
-✔️ Diversificação  
-✔️ Exposição global  
-✔️ Proteção contra inflação  
+✔️ Diversificação internacional  
+✔️ Exposição a ativos reais (ETFs)  
 
-**Pontos de atenção:**  
-⚠️ Volatilidade se houver cripto  
-⚠️ Predominância em renda variável  
+⚠️ Renda variável dominante  
+⚠️ Cripto aumenta volatilidade  
 
-**Perfil sugerido:** Moderado a arrojado
-""")
-        else:
-            st.warning("⚠️ Texto detectado, mas nenhum ativo reconhecido automaticamente.")
+**Perfil sugerido:** Moderado a arrojado  
+**Sugestão:** incluir renda fixa para equilíbrio
+        """)
