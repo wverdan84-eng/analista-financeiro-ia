@@ -1,176 +1,104 @@
 import streamlit as st
-import pandas as pd
 import requests
-import io
 from PIL import Image
-import re
+import io
 
-# ======================================
-# FUNÇÃO OCR VIA API (ROBUSTA PARA NUVEM)
-# ======================================
+st.set_page_config(page_title="Analista Financeiro IA", layout="centered")
+
+st.title("📊 Analista Financeiro com IA")
+st.write("Faça upload de um print da sua carteira para análise automática.")
+
+# ======================
+# FUNÇÃO OCR
+# ======================
 def ocr_ia(imagem):
-    url = "https://api.ocr.space/parse/image"
+    api_key = "helloworld"  # chave gratuita OCR.space
 
-    payload = {
-        "language": "por",
-        "isOverlayRequired": False,
-        "OCREngine": 2
-    }
+    buffered = io.BytesIO()
+    imagem.save(buffered, format="PNG")
+    img_bytes = buffered.getvalue()
 
-    image_bytes = io.BytesIO()
-    imagem.save(image_bytes, format="PNG")
+    response = requests.post(
+        "https://api.ocr.space/parse/image",
+        files={"file": img_bytes},
+        data={
+            "apikey": api_key,
+            "language": "por",
+            "isOverlayRequired": False,
+        },
+        timeout=30
+    )
 
     try:
-        response = requests.post(
-            url,
-            files={"file": image_bytes.getvalue()},
-            data=payload,
-            timeout=30
-        )
-
-        if response.status_code != 200:
-            return ""
-
         result = response.json()
-
-        if not isinstance(result, dict):
-            return ""
-
-        parsed = result.get("ParsedResults")
-
-        if not parsed:
-            return ""
-
-        return parsed[0].get("ParsedText", "")
-
     except Exception:
         return ""
 
+    if (
+        isinstance(result, dict)
+        and "ParsedResults" in result
+        and result["ParsedResults"]
+        and "ParsedText" in result["ParsedResults"][0]
+    ):
+        return result["ParsedResults"][0]["ParsedText"]
 
-# ======================================
-# CONFIGURAÇÃO STREAMLIT
-# ======================================
-st.set_page_config(
-    page_title="Analista Financeiro IA",
-    page_icon="📊",
-    layout="centered"
-)
+    return ""
 
-st.title("📊 Analista Financeiro IA")
-st.write(
-    "Envie um **print da sua carteira de investimentos** "
-    "e receba uma análise automática como um consultor profissional."
-)
 
-# ======================================
+# ======================
 # UPLOAD DA IMAGEM
-# ======================================
+# ======================
 arquivo = st.file_uploader(
-    "📤 Envie o print da carteira",
+    "📷 Envie um print da carteira (PNG ou JPG)",
     type=["png", "jpg", "jpeg"]
 )
 
 if arquivo:
     imagem = Image.open(arquivo)
-    st.image(imagem, caption="Print enviado", use_container_width=True)
+    st.image(imagem, caption="Imagem enviada", use_container_width=True)
 
-    with st.spinner("🔍 Lendo imagem com IA..."):
+    with st.spinner("🔍 Extraindo texto da imagem..."):
         texto = ocr_ia(imagem)
 
     if not texto.strip():
-        st.warning(
-            "⚠️ Não foi possível extrair texto do print. "
-            "Tente uma imagem mais nítida ou com fundo claro."
+        st.error(
+            "❌ Não foi possível extrair texto do print.\n\n"
+            "👉 Dicas:\n"
+            "- Use fundo claro\n"
+            "- Evite imagens borradas\n"
+            "- Print direto do app/corretora\n"
+            "- Aumente o zoom antes do print"
         )
-    else:
-        st.subheader("📄 Texto bruto detectado")
-        st.text(texto)
+        st.stop()
 
-        # ======================================
-        # PROCESSAMENTO DO TEXTO
-        # ======================================
-        linhas = texto.splitlines()
-        tickers = []
+    st.success("✅ Texto extraído com sucesso!")
+    st.text_area("📄 Texto reconhecido:", texto, height=300)
 
-        padrao_ticker = re.compile(r"^[A-Z]{2,5}$")
+    # ======================
+    # ANÁLISE SIMPLES
+    # ======================
+    linhas = texto.splitlines()
 
-        for linha in linhas:
-            linha = linha.strip()
-            if padrao_ticker.match(linha):
-                tickers.append(linha)
+    renda_variavel = []
+    renda_fixa = []
+    cripto = []
 
-        ativos = sorted(set(tickers))
+    for linha in linhas:
+        l = linha.lower()
+        if any(x in l for x in ["petro", "vale", "itub", "bbas", "ação", "etf"]):
+            renda_variavel.append(linha)
+        elif any(x in l for x in ["cdb", "tesouro", "lci", "lca"]):
+            renda_fixa.append(linha)
+        elif any(x in l for x in ["btc", "eth", "bitcoin", "cripto"]):
+            cripto.append(linha)
 
-        if not ativos:
-            st.warning("⚠️ Nenhum ativo reconhecido no print.")
-        else:
-            # ======================================
-            # TABELA DE ATIVOS
-            # ======================================
-            st.subheader("📊 Carteira organizada")
-            df = pd.DataFrame(ativos, columns=["Ativo"])
-            st.dataframe(df, use_container_width=True)
+    total_ativos = len(set(renda_variavel + renda_fixa + cripto))
 
-            # ======================================
-            # CLASSIFICAÇÃO
-            # ======================================
-            renda_variavel = []
-            cripto = []
-            renda_fixa = []
+    st.markdown(f"""
+### 📌 Resumo da Carteira
 
-            for ativo in ativos:
-                if ativo in ["BTC", "ETH", "BTCO"]:
-                    cripto.append(ativo)
-                elif ativo in ["BND", "BNDX"]:
-                    renda_fixa.append(ativo)
-                else:
-                    renda_variavel.append(ativo)
-
-            total_ativos = len(ativos)
-
-            # ======================================
-            # ANÁLISE PROFISSIONAL
-            # ======================================
-            st.subheader("🧠 Análise do Analista Financeiro IA")
-
-            st.markdown(f"""
-**Resumo geral da carteira:**
-
-- Total de ativos identificados: **{total_ativos}**
-- Renda variável (ETFs/Ações): **{len(renda_variavel)}**
-- Criptomoedas: **{len(cripto)}**
-- Renda fixa: **{len(renda_fixa)}**
-
-**Análise profissional:**
-
-Sua carteira demonstra **boa diversificação internacional**, com exposição a múltiplas classes de ativos.
-
-**Pontos positivos:**
-✔️ Diversificação geográfica  
-✔️ Exposição a crescimento global  
-✔️ Ativos de proteção (ouro / defensivos)
-
-**Pontos de atenção:**
-⚠️ Alta concentração em renda variável  
-⚠️ Criptomoedas aumentam volatilidade  
-
-**Perfil sugerido:** Moderado a arrojado
-            """)
-
-            # ======================================
-            # GRÁFICO
-            # ======================================
-            st.subheader("📈 Distribuição da Carteira")
-
-            distribuicao = {
-                "Renda Variável": len(renda_variavel),
-                "Criptomoedas": len(cripto),
-                "Renda Fixa": len(renda_fixa)
-            }
-
-            df_grafico = pd.DataFrame(
-                distribuicao.items(),
-                columns=["Tipo", "Quantidade"]
-            )
-
-            st.bar_chart(df_grafico.set_index("Tipo"))
+- **Total de ativos identificados:** {total_ativos}
+- **Renda variável (ações / ETFs):** {len(renda_variavel)}
+- **Renda fixa:** {len(renda_fixa)}
+- **Criptomoedas:** {len(cripto)}
+""")
