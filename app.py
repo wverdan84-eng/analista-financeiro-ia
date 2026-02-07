@@ -1,116 +1,87 @@
 import streamlit as st
-import requests
-import io
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image
+import pytesseract
+import yfinance as yf
 import re
 
-st.set_page_config(page_title="Analista Financeiro IA", layout="centered")
+# Configurar caminho do Tesseract
+# ATENÇÃO: ajuste para onde está instalado no seu PC
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-st.title("📊 Analista Financeiro IA")
-st.write("Envie o print da sua carteira ou cole os ativos manualmente.")
+st.title("🧠 Analista Financeiro IA - Grátis")
+st.write("Suba o print da sua carteira e receba um resumo e análise.")
 
-# ---------- OCR ----------
-def ocr_ia(imagem):
+# Upload da imagem
+uploaded_file = st.file_uploader("📷 Escolha o print da carteira", type=["png","jpg","jpeg"])
+
+def extrair_texto(imagem):
+    """Usa OCR para extrair texto da imagem"""
     try:
-        imagem = imagem.convert("L")
-        imagem = ImageOps.invert(imagem)
-        imagem = ImageEnhance.Contrast(imagem).enhance(2.5)
-        imagem = ImageEnhance.Sharpness(imagem).enhance(2)
+        texto = pytesseract.image_to_string(imagem, lang="por")
+        return texto
+    except:
+        return ""
 
-        buffer = io.BytesIO()
-        imagem.save(buffer, format="PNG")
-
-        response = requests.post(
-            "https://api.ocr.space/parse/image",
-            files={"file": buffer.getvalue()},
-            data={
-                "apikey": "helloworld",
-                "language": "eng",
-                "OCREngine": 2,
-            },
-            timeout=20,
-        )
-
-        data = response.json()
-        if isinstance(data, dict) and data.get("ParsedResults"):
-            return data["ParsedResults"][0].get("ParsedText", "")
-    except Exception:
-        pass
-
-    return ""
-
-# ---------- PARSER ----------
-def organizar_ativos(texto):
-    linhas = texto.splitlines()
+def processar_texto(texto):
+    """Processa texto bruto em ativos e valores"""
     ativos = []
-
+    linhas = texto.split("\n")
     for linha in linhas:
-        ticker = re.findall(r"\b[A-Z]{2,5}\b", linha)
-        if ticker:
-            ativos.append(ticker[0])
+        linha = linha.strip()
+        # Detecta tickers (ex: VT, GLD, BTCO)
+        if re.match(r"^[A-Z]{2,5}$", linha):
+            ativos.append({"ticker": linha, "valor": None})
+        # Detecta valores (ex: US$ 1.314,72)
+        elif "US$" in linha and ativos:
+            valor = re.sub(r"[^\d,\.]", "", linha).replace(",",".")
+            ativos[-1]["valor"] = float(valor)
+    return ativos
 
-    return list(set(ativos))
-
-# ---------- APP ----------
-imagem = st.file_uploader("📷 Envie o print da carteira", type=["png", "jpg", "jpeg"])
-
-texto_extraido = ""
-
-if imagem:
-    img = Image.open(imagem)
-    texto_extraido = ocr_ia(img)
-
-    if texto_extraido.strip():
-        st.success("📄 Texto detectado automaticamente")
-        st.text_area("Texto detectado", texto_extraido, height=150)
-    else:
-        st.warning("❌ OCR não conseguiu ler o print")
-
-texto_manual = st.text_area(
-    "✍️ Cole ou digite seus ativos (ex: VT, VNQ, GLD, BTCO)",
-    height=120,
-)
-
-texto_final = texto_extraido if texto_extraido.strip() else texto_manual
-
-if st.button("🔍 Analisar carteira"):
-    if not texto_final.strip():
-        st.error("Informe ao menos um ativo.")
-    else:
-        ativos = organizar_ativos(texto_final)
-
-        renda_variavel = []
-        cripto = []
-        renda_fixa = []
-
-        for a in ativos:
-            if a in ["BTC", "ETH", "BTCO"]:
-                cripto.append(a)
-            elif a in ["CDB", "TESOURO", "LCI", "LCA"]:
-                renda_fixa.append(a)
+def analisar_ativos(ativos):
+    """Consulta preços atuais e sugere classificação"""
+    resumo = {"renda_variavel": [], "cripto": [], "renda_fixa": []}
+    for ativo in ativos:
+        ticker = ativo["ticker"]
+        try:
+            info = yf.Ticker(ticker)
+            tipo = "Renda Variável" if info.info.get("quoteType")=="ETF" else "Outro"
+            if "crypto" in ticker.lower():
+                tipo = "Criptomoeda"
+            if tipo=="Renda Variável":
+                resumo["renda_variavel"].append(ativo)
+            elif tipo=="Criptomoeda":
+                resumo["cripto"].append(ativo)
             else:
-                renda_variavel.append(a)
+                resumo["renda_fixa"].append(ativo)
+        except:
+            resumo["renda_variavel"].append(ativo)  # fallback
+    return resumo
 
-        st.markdown("## 🧠 Análise do Analista Financeiro IA")
+def gerar_relatorio(resumo):
+    st.markdown("**Resumo geral da carteira:**")
+    st.markdown(f"- Renda variável (ETFs/Ações): {len(resumo['renda_variavel'])}")
+    st.markdown(f"- Criptomoedas: {len(resumo['cripto'])}")
+    st.markdown(f"- Renda fixa: {len(resumo['renda_fixa'])}")
+    
+    st.markdown("**Análise simplificada:**")
+    if resumo["cripto"]:
+        st.markdown("- ⚠️ Contém criptomoedas, cuidado com volatilidade.")
+    if resumo["renda_variavel"]:
+        st.markdown("- ✔️ Renda variável diversificada.")
+    if resumo["renda_fixa"]:
+        st.markdown("- ✔️ Presença de ativos mais seguros.")
 
-        st.markdown(f"""
-**Resumo da carteira**
-
-- Total de ativos: **{len(ativos)}**
-- Renda variável: **{len(renda_variavel)}**
-- Criptomoedas: **{len(cripto)}**
-- Renda fixa: **{len(renda_fixa)}**
-        """)
-
-        st.markdown("""
-### 📈 Diagnóstico profissional
-
-✔️ Diversificação internacional  
-✔️ Exposição a ativos reais (ETFs)  
-
-⚠️ Renda variável dominante  
-⚠️ Cripto aumenta volatilidade  
-
-**Perfil sugerido:** Moderado a arrojado  
-**Sugestão:** incluir renda fixa para equilíbrio
-        """)
+if uploaded_file:
+    imagem = Image.open(uploaded_file)
+    st.image(imagem, caption="Print carregado", use_column_width=True)
+    texto = extrair_texto(imagem)
+    
+    if texto.strip():
+        ativos = processar_texto(texto)
+        if ativos:
+            resumo = analisar_ativos(ativos)
+            gerar_relatorio(resumo)
+        else:
+            st.error("❌ Não foi possível identificar ativos. Verifique o print.")
+    else:
+        st.error("❌ Não foi possível extrair texto do print.")
