@@ -1,69 +1,110 @@
 import streamlit as st
-from PIL import Image
-import pytesseract
-import re
 import pandas as pd
+import requests
+import io
+from PIL import Image
+import re
 
-# Caminho do Tesseract no Windows
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# -----------------------------
+# FUNÇÃO OCR VIA IA (OCR.Space)
+# -----------------------------
+def ocr_ia(imagem):
+    url = "https://api.ocr.space/parse/image"
+    payload = {
+        "language": "por",
+        "isOverlayRequired": False,
+        "OCREngine": 2
+    }
 
-st.set_page_config(page_title="Analista Financeiro IA")
+    image_bytes = io.BytesIO()
+    imagem.save(image_bytes, format="PNG")
+
+    response = requests.post(
+        url,
+        files={"file": image_bytes.getvalue()},
+        data=payload
+    )
+
+    result = response.json()
+
+    if result.get("ParsedResults"):
+        return result["ParsedResults"][0]["ParsedText"]
+    else:
+        return ""
+
+
+# -----------------------------
+# CONFIG STREAMLIT
+# -----------------------------
+st.set_page_config(
+    page_title="Analista Financeiro IA",
+    page_icon="📊",
+    layout="centered"
+)
 
 st.title("📊 Analista Financeiro IA")
-st.write("Envie um print da sua carteira e receba uma análise automática")
+st.write("Envie um **print da sua carteira de investimentos** e receba uma análise profissional automática.")
 
-# Upload do print
+# -----------------------------
+# UPLOAD DA IMAGEM
+# -----------------------------
 arquivo = st.file_uploader(
-    "Upload do print da carteira (PNG ou JPG)",
+    "📤 Envie o print da carteira",
     type=["png", "jpg", "jpeg"]
 )
 
 if arquivo:
     imagem = Image.open(arquivo)
-    st.image(imagem, caption="Print carregado", use_container_width=True)
+    st.image(imagem, caption="Print enviado", use_container_width=True)
 
-    # OCR
-    texto = pytesseract.image_to_string(imagem)
+    with st.spinner("🔍 Analisando imagem com IA..."):
+        texto = ocr_ia(imagem)
 
     st.subheader("📄 Texto bruto detectado")
     st.text(texto)
 
-    # Extrair ativos e valores
-    ativos = re.findall(r"\b[A-Z]{2,5}\b", texto)
-    valores = re.findall(r"US\$ ?[\d.,]+", texto)
+    # -----------------------------
+    # PROCESSAMENTO DO TEXTO
+    # -----------------------------
+    linhas = texto.splitlines()
+    tickers = []
 
-    tamanho = min(len(ativos), len(valores))
+    padrao_ticker = re.compile(r"^[A-Z]{2,5}$")
 
-    dados = []
-    for i in range(tamanho):
-        dados.append({
-            "Ativo": ativos[i],
-            "Valor": valores[i]
-        })
+    for linha in linhas:
+        linha = linha.strip()
+        if padrao_ticker.match(linha):
+            tickers.append(linha)
 
-    if dados:
-        df = pd.DataFrame(dados)
+    ativos_unicos = sorted(set(tickers))
 
+    if ativos_unicos:
         st.subheader("📊 Carteira organizada")
-        st.dataframe(df)
 
-        # ===== ANÁLISE =====
-        st.subheader("🧠 Análise do Analista Financeiro IA")
+        df = pd.DataFrame(ativos_unicos, columns=["Ativo"])
+        st.dataframe(df, use_container_width=True)
 
-        ativos_unicos = df["Ativo"].unique()
-        total_ativos = len(ativos_unicos)
-
+        # -----------------------------
+        # CLASSIFICAÇÃO DOS ATIVOS
+        # -----------------------------
         renda_variavel = []
-        renda_fixa = []
         cripto = []
+        renda_fixa = []
 
         for ativo in ativos_unicos:
-            if ativo in ["VT", "VNQ", "GLD"]:
-                renda_variavel.append(ativo)
-            elif ativo in ["BTCO", "VTI"]:
+            if ativo in ["BTC", "ETH", "BTCO"]:
                 cripto.append(ativo)
+            elif ativo in ["BND", "BNDX"]:
+                renda_fixa.append(ativo)
             else:
                 renda_variavel.append(ativo)
+
+        total_ativos = len(ativos_unicos)
+
+        # -----------------------------
+        # ANÁLISE PROFISSIONAL
+        # -----------------------------
+        st.subheader("🧠 Análise do Analista Financeiro IA")
 
         st.markdown(f"""
 **Resumo geral da carteira:**
@@ -75,26 +116,24 @@ if arquivo:
 
 **Análise profissional:**
 
-Sua carteira apresenta uma **boa diversificação internacional**, com exposição a:
-- Mercado global (VT)
-- Imobiliário (VNQ)
-- Ouro como proteção (GLD)
-- Criptomoedas como ativo de alto risco (BTCO)
+Sua carteira apresenta **boa diversificação internacional**, com exposição a diferentes classes de ativos, o que reduz riscos específicos.
 
 **Pontos positivos:**
 ✔️ Diversificação geográfica  
-✔️ Proteção contra inflação  
-✔️ Exposição a crescimento global  
+✔️ Exposição a ativos globais  
+✔️ Inclusão de ativos de proteção e crescimento  
 
 **Pontos de atenção:**
-⚠️ Criptomoedas aumentam a volatilidade  
 ⚠️ Alta concentração em renda variável  
+⚠️ Criptomoedas aumentam volatilidade  
 
 **Perfil sugerido:** Moderado a arrojado
         """)
 
-        # ===== GRÁFICO =====
-        st.subheader("📈 Visualização da Carteira")
+        # -----------------------------
+        # GRÁFICO
+        # -----------------------------
+        st.subheader("📈 Distribuição da Carteira")
 
         distribuicao = {
             "Renda Variável": len(renda_variavel),
@@ -110,4 +149,4 @@ Sua carteira apresenta uma **boa diversificação internacional**, com exposiç�
         st.bar_chart(df_grafico.set_index("Tipo"))
 
     else:
-        st.warning("Não foi possível organizar os dados automaticamente.")
+        st.warning("⚠️ Nenhum ativo reconhecido no print. Tente uma imagem mais nítida.")
